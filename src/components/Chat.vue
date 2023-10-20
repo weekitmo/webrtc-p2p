@@ -7,6 +7,20 @@ const hostname = "localhost";
 const message = ref(``);
 const username = ref(``);
 const receiveMsg = ref<Message[]>([]);
+const fileinput = ref<HTMLInputElement>();
+
+const incomingFileData: BlobPart[] = []; // 文件数据
+let incomingFileInfo: FileInfo = {
+  type: "file",
+  name: "",
+  size: 0,
+}; // 文件信息
+
+interface FileInfo {
+  type: string;
+  name: string;
+  size: number;
+}
 
 interface User {
   clientId: string;
@@ -29,6 +43,7 @@ interface OfferMsgBox extends PeerMsgBox {
 }
 
 interface Message {
+  type: string;
   clientId: string;
   username: string;
   value: string;
@@ -122,6 +137,11 @@ function createPeerConnection() {
     sendDisabled.value = false;
     connectDisabled.value = true;
   };
+  sendChannel.binaryType = "arraybuffer";
+  // 当发送缓冲区的大小低于其缓冲区阈值时触发此事件。这是一个提示，告诉您可以安全地发送更多数据
+  sendChannel.onbufferedamountlow = (event) => {
+    console.warn("🤖 onbufferedamountlow", event);
+  };
   sendChannel.onclose = (event) => {
     console.log("数据通道关闭😭");
     // 同时关闭ws
@@ -133,9 +153,22 @@ function createPeerConnection() {
     console.log("====开始监听数据====\n", event.channel);
     receiveChannel = event.channel;
     receiveChannel.onmessage = (event) => {
-      console.log(event.data);
-      const data: Message = JSON.parse(event.data as string);
-      receiveMsg.value.push(data);
+      console.log(`<--- 收到数据`, typeof event.data);
+      if (typeof event.data === `string`) {
+        const data: Message = JSON.parse(event.data as string);
+        if (data.type === `file`) {
+          incomingFileInfo = data as unknown as FileInfo;
+          receiveMsg.value.push({
+            type: "file",
+            clientId: `-`,
+            username: `收到文件`,
+            value: incomingFileInfo.name,
+            time: Date.now(),
+          });
+        } else receiveMsg.value.push(data);
+      } else if (event.data instanceof ArrayBuffer) {
+        handleReceiveFile(event.data);
+      }
     };
 
     receiveChannel.onclose = () => {
@@ -260,6 +293,7 @@ async function handleReceiveICECandidate(msg) {
 function sendMessage() {
   console.log(clientId, username.value);
   const data: Message = {
+    type: "chat",
     clientId,
     username: username.value,
     value: message.value,
@@ -268,6 +302,86 @@ function sendMessage() {
   sendChannel.send(JSON.stringify(data));
 
   message.value = "";
+}
+
+function sendFile() {
+  if (fileinput.value.files.length > 0) {
+    const file = fileinput.value.files[0];
+    sendChannel.send(
+      JSON.stringify({ type: "file", name: file.name, size: file.size })
+    );
+    readFileData();
+  } else {
+    alert(`请选择文件`);
+  }
+}
+let bytesReceived = 0; // 已接收的字节数
+let downloadStatus = ref(false);
+// 接收对方发送的文件
+function handleReceiveFile(data: any) {
+  if (bytesReceived === 0) {
+    // 重复接收时，清空数据
+    incomingFileData.length = 0;
+  }
+  incomingFileData.push(data);
+  bytesReceived += data.byteLength;
+  // 接收完成
+  if (bytesReceived === incomingFileInfo.size) {
+    downloadStatus.value = true;
+    bytesReceived = 0;
+    alert("文件接收完成，请点击下载");
+  }
+}
+
+// 格式化文件尺寸
+function readableBytes(bytes: number) {
+  if (bytes === 0) return "0 B";
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  const sizes = ["B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"];
+
+  return `${(bytes / 1024 ** i).toFixed(2)} ${sizes[i]}`;
+}
+
+// 读取文件内容
+async function readFileData() {
+  let offset = 0;
+  let buffer = null;
+  const file = fileinput.value.files[0];
+  const chunkSize = localConnection.sctp?.maxMessageSize;
+  console.log(`chunkSize: ${chunkSize}/${file.size}`);
+  if (!chunkSize) return;
+  while (offset < file.size) {
+    const slice = file.slice(offset, offset + chunkSize);
+    buffer = await slice.arrayBuffer();
+    // 为了避免数据通道的缓存队列过大，导致数据发送延迟或者阻塞。
+    // 当数据通道的缓存队列大小超过了 65535 字节时，就会暂停发送数据，等待缓存队列降到阈值之下再继续发送数据。这样可以保证数据通道的稳定性和可靠性。
+    if (sendChannel.bufferedAmount > 65535) {
+      // 等待缓存队列降到阈值之下
+      await new Promise((resolve) => {
+        sendChannel.onbufferedamountlow = (ev) => {
+          console.warn(
+            `bufferedamountlow event! bufferedAmount: ${sendChannel.bufferedAmount}`
+          );
+          resolve(0);
+        };
+      });
+    }
+    // 可以发送数据了
+    sendChannel.send(buffer);
+    offset += buffer.byteLength;
+  }
+}
+
+// 下载文件
+function downloadFile() {
+  if (!downloadStatus) return;
+  const blob = new Blob(incomingFileData, { type: "application/octet-stream" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = incomingFileInfo.name;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 //关闭连接
@@ -400,6 +514,11 @@ onBeforeUnmount(() => {
       </label>
       <button :disabled="sendDisabled" @click="sendMessage">发送</button>
     </div>
+  </div>
+  <div class="send-file">
+    <input type="file" name="myfile" ref="fileinput" />
+    <button :disabled="sendDisabled" @click="sendFile">发送</button>
+    <button :disabled="!downloadStatus" @click="downloadFile">下载</button>
   </div>
 </template>
 
