@@ -3,9 +3,9 @@ import { onBeforeUnmount, ref } from "vue";
 
 const connectDisabled = ref(false);
 const sendDisabled = ref(true);
-const hostname = "localhost";
-const message = ref(``);
-const username = ref(``);
+const hostname = __IP__;
+let message = $ref(``);
+let username = $ref(``);
 const receiveMsg = ref<Message[]>([]);
 const fileinput = ref<HTMLInputElement>();
 
@@ -64,7 +64,7 @@ let remoteClientId: string = null;
 let remoteClientIdCopy: string = null;
 let remoteUsername: string = null;
 const print = (...msg: any[]) => {
-  console.log(`[${username.value}] `, ...msg);
+  console.log(`[${username}] `, ...msg);
 };
 function sendToServer(msg) {
   const _msg = JSON.stringify(msg);
@@ -91,7 +91,7 @@ function connectPeers() {
         sendToServer({
           type: "username",
           clientId: clientId,
-          username: username.value,
+          username: username,
         });
         break;
       case "user-list":
@@ -172,7 +172,9 @@ function createPeerConnection() {
             type: "file",
             clientId: `-`,
             username: `收到文件`,
-            value: incomingFileInfo.name,
+            value: `${incomingFileInfo.name} (${readableBytes(
+              incomingFileInfo.size
+            )})`,
             time: Date.now(),
           });
         } else receiveMsg.value.push(data);
@@ -240,7 +242,7 @@ async function handleNegotiationNeededEvent() {
       offerId: clientId,
       answerId: remoteClientId,
       sdp: localConnection.localDescription,
-      username: username.value,
+      username: username,
     };
     sendToServer(data);
   } catch (err) {
@@ -305,17 +307,17 @@ async function handleReceiveICECandidate(msg) {
 }
 
 function sendMessage() {
-  console.log(clientId, username.value);
+  print(clientId, username);
   const data: Message = {
     type: "chat",
     clientId,
-    username: username.value,
-    value: message.value,
+    username: username,
+    value: message,
     time: Date.now(),
   };
   sendChannel.send(JSON.stringify(data));
 
-  message.value = "";
+  message = "";
 }
 
 function sendFile() {
@@ -429,11 +431,11 @@ function disconnectPeers() {
 
   sendDisabled.value = true;
 
-  message.value = "";
+  message = "";
 }
 
 function connectToServer() {
-  if (!username.value) {
+  if (!username) {
     alert("用户名不能为空！");
     return;
   }
