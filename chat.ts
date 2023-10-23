@@ -23,11 +23,12 @@ interface PeerMsgBox extends BasicMsgBox {
   // eq clientId
   offerId: string;
   // eq another clientId
-  anserId: string;
+  answerId: string;
 }
 
 interface OfferMsgBox extends PeerMsgBox {
   sdp: string;
+  username: string
 }
 
 interface IceMsgBox extends PeerMsgBox {
@@ -62,6 +63,7 @@ wsServer.on("connection", (ws) => {
     type: "id",
     id: currentId,
   };
+  print(connectionQueue.map(item => item.clientId))
   ws.send(JSON.stringify(callbackMsg));
   ws.on("message", (message) => {
     const msg = message.toString("utf8");
@@ -82,10 +84,10 @@ wsServer.on("connection", (ws) => {
       default:
         //其他所有信息只往单个用户发送
         const _msg_ = msgBox as PeerMsgBox;
-        print(`[${_msg_.offerId}] to [${_msg_.anserId}] /${_msg_.type}`);
+        print(`[${_msg_.offerId}] to [${_msg_.answerId}] /${_msg_.type}`);
 
         let instance = connectionQueue.find(
-          (item) => item.clientId == _msg_.anserId
+          (item) => item.clientId == _msg_.answerId
         );
         if (instance) {
           print(msg);

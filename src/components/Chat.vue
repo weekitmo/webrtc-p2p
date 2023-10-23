@@ -35,11 +35,12 @@ interface PeerMsgBox extends BasicMsgBox {
   // eq clientId
   offerId: string;
   // eq another clientId
-  anserId: string;
+  answerId: string;
 }
 
 interface OfferMsgBox extends PeerMsgBox {
   sdp: RTCSessionDescription;
+  username: string;
 }
 
 interface Message {
@@ -130,9 +131,14 @@ function createPeerConnection() {
   localConnection.onicecandidate = handleICECandidateEvent;
   localConnection.onnegotiationneeded = handleNegotiationNeededEvent;
 
+  // sendChannel = localConnection.createDataChannel("sendChannel", {
+  //   maxRetransmits: 50,
+  //   negotiated: true,
+  //   id: 1,
+  // });
   sendChannel = localConnection.createDataChannel("sendChannel");
   sendChannel.onopen = (event) => {
-    console.log("数据通道已打开🚀");
+    console.log(`数据通道已打开🚀 ${sendChannel.id}`);
 
     sendDisabled.value = false;
     connectDisabled.value = true;
@@ -140,13 +146,17 @@ function createPeerConnection() {
   sendChannel.binaryType = "arraybuffer";
   // 当发送缓冲区的大小低于其缓冲区阈值时触发此事件。这是一个提示，告诉您可以安全地发送更多数据
   sendChannel.onbufferedamountlow = (event) => {
-    console.warn("🤖 onbufferedamountlow", event);
+    print("🤖", event.type);
   };
   sendChannel.onclose = (event) => {
     console.log("数据通道关闭😭");
     // 同时关闭ws
     disconnectPeers();
   };
+  // 使用 negotiated + id 时，不会触发ondatachannel事件
+  // sendChannel.onmessage = (event) => {
+  //   print(`this is use negotiated data channel`, event.data);
+  // };
   sendChannel.onerror = console.error;
 
   localConnection.ondatachannel = (event) => {
@@ -188,7 +198,7 @@ function handleICECandidateEvent(event) {
     sendToServer({
       type: "new-ice-candidate",
       offerId: clientId,
-      anserId: remoteClientId,
+      answerId: remoteClientId,
       candidate: event.candidate,
     });
   }
@@ -225,13 +235,14 @@ async function handleNegotiationNeededEvent() {
     console.log(
       `---> [${clientId}]发送本地描述(sdp)到到远端用户[${remoteClientId}]`
     );
-
-    sendToServer({
+    const data: OfferMsgBox = {
       type: "data-offer",
       offerId: clientId,
-      anserId: remoteClientId,
+      answerId: remoteClientId,
       sdp: localConnection.localDescription,
-    });
+      username: username.value,
+    };
+    sendToServer(data);
   } catch (err) {
     console.error(err);
   }
@@ -254,12 +265,15 @@ async function handleProcessOffer(msg: OfferMsgBox) {
   await localConnection.setLocalDescription(
     await localConnection.createAnswer()
   );
+  // 记录邀请方的clientId
+  remoteClientId = msg.offerId;
+  remoteUsername = msg.username;
 
   // 通过ws传输answer
   sendToServer({
     type: "data-answer",
-    offerId: msg.anserId,
-    anserId: msg.offerId,
+    offerId: msg.answerId,
+    answerId: msg.offerId,
     sdp: localConnection.localDescription,
   });
 }
