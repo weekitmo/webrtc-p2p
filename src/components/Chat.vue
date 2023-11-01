@@ -152,6 +152,7 @@ function createPeerConnection() {
   };
   sendChannel.onclose = (event) => {
     console.log("数据通道关闭😭");
+    closeRTC();
     // 同时关闭ws
     disconnectPeers();
   };
