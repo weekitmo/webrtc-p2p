@@ -77,7 +77,8 @@ function sendToServer(msg) {
 //连接socket服务器
 function connectPeers() {
   // 打开一个 web socket
-  websocket = new WebSocket(`ws://${hostname}:8080`);
+  websocket = new WebSocket(`ws://${hostname}:8080/`);
+
   websocket.onopen = () => {
     if (websocket.readyState === websocket.OPEN) {
       console.log("已连接上...");
@@ -89,12 +90,12 @@ function connectPeers() {
       case "id":
         clientId = msg.id;
         sendToServer({
-          type: "username",
+          type: "join",
           clientId: clientId,
           username: username,
         });
         break;
-      case "user-list":
+      case "users":
         users.value = msg.users;
         break;
       case "data-offer":
@@ -110,6 +111,7 @@ function connectPeers() {
   };
   websocket.onclose = function () {
     console.log("链接已关闭...");
+    connectDisabled.value = false;
   };
 }
 
@@ -402,6 +404,15 @@ function downloadFile() {
 
 //关闭连接
 function disconnectPeers() {
+  if (websocket) {
+    websocket.close();
+    websocket = null;
+  }
+
+  connectDisabled.value = false;
+}
+
+function closeRTC() {
   if (sendChannel) {
     sendChannel.onopen = null;
     sendChannel.onclose = null;
@@ -422,12 +433,6 @@ function disconnectPeers() {
     localConnection.close();
     localConnection = null;
   }
-  if (websocket) {
-    websocket.close();
-    websocket = null;
-  }
-
-  connectDisabled.value = false;
 
   sendDisabled.value = true;
 
@@ -488,7 +493,9 @@ onBeforeUnmount(() => {
       />
     </label>
     <button :disabled="connectDisabled" @click="connectToServer">连接</button>
-    <button :disabled="!connectDisabled" @click="disconnectPeers">断开</button>
+    <button :disabled="!connectDisabled" @click="disconnectPeers">
+      断开Websocket
+    </button>
     <div class="chatbox">
       <ul class="left-item">
         <li
@@ -529,6 +536,7 @@ onBeforeUnmount(() => {
         />
       </label>
       <button :disabled="sendDisabled" @click="sendMessage">发送</button>
+      <button :disabled="sendDisabled" @click="closeRTC">断开</button>
     </div>
   </div>
   <div class="send-file">

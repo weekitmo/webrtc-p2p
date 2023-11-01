@@ -69,7 +69,7 @@ wsServer.on("connection", (ws) => {
     const msg = message.toString("utf8");
     const msgBox: BasicMsgBox = JSON.parse(msg);
     switch (msgBox.type) {
-      case "username":
+      case "join":
         //新用户进入
         const _msg = msgBox as JoinMsgBox;
         print(`[${_msg.username}] 进入聊天室(${connectionQueue.length})`);
@@ -108,14 +108,14 @@ wsServer.on("connection", (ws) => {
 });
 
 const broadcast = () => {
-  const userList = connectionQueue.map((item) => {
+  const users = connectionQueue.map((item) => {
     return { clientId: item.clientId, username: item.username };
   });
   connectionQueue.forEach((item) => {
     item.connection.send(
       JSON.stringify({
-        type: "user-list",
-        users: userList,
+        type: "users",
+        users,
       })
     );
   });

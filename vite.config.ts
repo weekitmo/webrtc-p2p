@@ -11,6 +11,7 @@ export default defineConfig({
   define: {
     __IP__: JSON.stringify(getIpAddress()),
   },
+  base: "/web/rtc"
 });
 
 function getIpAddress() {
