@@ -1,6 +1,7 @@
 import WebSocket, { WebSocketServer } from "ws";
 import http from "node:http";
-const port = 8080;
+const port = 8081;
+const hostname = `0.0.0.0`;
 const server = http.createServer((request, response) => {
   console.log(`[${new Date()}] Received request from ${request.url}`);
   response.writeHead(404);
@@ -28,7 +29,7 @@ interface PeerMsgBox extends BasicMsgBox {
 
 interface OfferMsgBox extends PeerMsgBox {
   sdp: string;
-  username: string
+  username: string;
 }
 
 interface IceMsgBox extends PeerMsgBox {
@@ -63,7 +64,7 @@ wsServer.on("connection", (ws) => {
     type: "id",
     id: currentId,
   };
-  print(connectionQueue.map(item => item.clientId))
+  print(connectionQueue.map((item) => item.clientId));
   ws.send(JSON.stringify(callbackMsg));
   ws.on("message", (message) => {
     const msg = message.toString("utf8");
@@ -121,6 +122,6 @@ const broadcast = () => {
   });
 };
 
-server.listen(port, () => {
+server.listen(port, hostname, () => {
   console.log(`[${new Date()}] Server is listening on port ${port}`);
 });

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref } from "vue";
+import { computed, onBeforeUnmount, ref } from "vue";
 
 const connectDisabled = ref(false);
 const sendDisabled = ref(true);
@@ -25,6 +25,10 @@ interface FileInfo {
 interface User {
   clientId: string;
   username: string;
+  lock?: {
+    value: boolean;
+    extra: any;
+  };
 }
 interface BasicMsgBox {
   type: string;
@@ -43,6 +47,12 @@ interface OfferMsgBox extends PeerMsgBox {
   username: string;
 }
 
+interface LockMsgBox extends BasicMsgBox {
+  sponsor: string;
+  invitees: string;
+  lock: boolean;
+}
+
 interface Message {
   type: string;
   clientId: string;
@@ -52,6 +62,27 @@ interface Message {
 }
 
 const users = ref<User[]>([]);
+
+const usersWithMark = computed(() => {
+  return users.value.map((item) => {
+    console.log(item);
+    let mark = ``;
+    if (item.lock?.extra.sponsor === item.clientId) {
+      mark = findName(item.lock?.extra.invitees);
+    } else if (item.lock?.extra.invitees === item.clientId) {
+      mark = findName(item.lock?.extra.sponsor);
+    }
+    return {
+      ...item,
+      mark: item.lock?.value ? ` 📞(${mark})` : "",
+    };
+  });
+});
+
+function findName(id) {
+  const _temp = users.value.find((item) => item.clientId === id);
+  return _temp.username;
+}
 
 let websocket: WebSocket = null;
 let localConnection: RTCPeerConnection = null;
@@ -63,6 +94,7 @@ let remoteClientId: string = null;
 // 防止多次对同一个用户发起连接
 let remoteClientIdCopy: string = null;
 let remoteUsername: string = null;
+let peerTimeout = null;
 const print = (...msg: any[]) => {
   console.log(`[${username}] `, ...msg);
 };
@@ -77,7 +109,12 @@ function sendToServer(msg) {
 //连接socket服务器
 function connectPeers() {
   // 打开一个 web socket
-  websocket = new WebSocket(`ws://${hostname}:8080/`);
+  websocket = new WebSocket(`ws://${hostname}:8081/`);
+  // const wsUrl =
+  //   location.protocol === "https:"
+  //     ? `wss://jsapi.ghzs.com/ws/rtc`
+  //     : `ws://${hostname}:3888/ws/rtc`;
+  // websocket = new WebSocket(wsUrl);
 
   websocket.onopen = () => {
     if (websocket.readyState === websocket.OPEN) {
@@ -86,6 +123,7 @@ function connectPeers() {
   };
   websocket.onmessage = (evt) => {
     const msg = JSON.parse(evt.data);
+    console.log(msg);
     switch (msg.type) {
       case "id":
         clientId = msg.id;
@@ -98,6 +136,23 @@ function connectPeers() {
       case "users":
         users.value = msg.users;
         break;
+      case "lock-info":
+        const _lockInfo = <LockMsgBox>msg;
+        users.value.forEach((item) => {
+          if (
+            _lockInfo.invitees === item.clientId ||
+            _lockInfo.sponsor === item.clientId
+          ) {
+            item.lock = {
+              value: _lockInfo.lock,
+              extra: {
+                sponsor: _lockInfo.sponsor,
+                invitees: _lockInfo.invitees,
+              },
+            };
+          }
+        });
+        break;
       case "data-offer":
         handleProcessOffer(msg);
         break;
@@ -107,10 +162,18 @@ function connectPeers() {
       case "new-ice-candidate":
         handleReceiveICECandidate(msg);
         break;
+      default:
+        console.log("未知消息类型", msg);
+        break;
     }
   };
   websocket.onclose = function () {
     console.log("链接已关闭...");
+    // 当网络切换时，部分场景没有触发close
+    if (websocket && websocket.readyState === websocket.CLOSED) {
+      websocket.close();
+      websocket = null;
+    }
     connectDisabled.value = false;
   };
 }
@@ -118,6 +181,10 @@ function connectPeers() {
 // 创建RTCPeerConnection
 function createPeerConnection() {
   console.log("Create PeerConnection...");
+  peerTimeout = setTimeout(() => {
+    closeRTC();
+    alert("超过10s未连接成功~连接超时");
+  }, 10 * 1000);
   localConnection = new RTCPeerConnection({
     iceServers: [
       {
@@ -141,9 +208,15 @@ function createPeerConnection() {
   sendChannel = localConnection.createDataChannel("sendChannel");
   sendChannel.onopen = (event) => {
     console.log(`数据通道已打开🚀 ${sendChannel.id}`);
-
+    clearTimeout(peerTimeout);
     sendDisabled.value = false;
     connectDisabled.value = true;
+    sendToServer({
+      type: "lock",
+      sponsor: clientId,
+      invitees: remoteClientId,
+      lock: true,
+    });
   };
   sendChannel.binaryType = "arraybuffer";
   // 当发送缓冲区的大小低于其缓冲区阈值时触发此事件。这是一个提示，告诉您可以安全地发送更多数据
@@ -152,6 +225,12 @@ function createPeerConnection() {
   };
   sendChannel.onclose = (event) => {
     console.log("数据通道关闭😭");
+    sendToServer({
+      type: "lock",
+      sponsor: clientId,
+      invitees: remoteClientId,
+      lock: false,
+    });
     closeRTC();
     // 同时关闭ws
     disconnectPeers();
@@ -200,6 +279,10 @@ function handleICECandidateEvent(event) {
       "---> 找到ICE candidate并发送(onicecandidate): " +
         event.candidate.candidate
     );
+    const candidate = event.candidate.candidate;
+    const ipRegex = /([0-9]{1,3}\.){3}[0-9]{1,3}/;
+    const ipMatch = candidate.match(ipRegex);
+    console.log(`---> IP: ${ipMatch}`);
     sendToServer({
       type: "new-ice-candidate",
       offerId: clientId,
@@ -210,6 +293,9 @@ function handleICECandidateEvent(event) {
 }
 
 function invite(user: User) {
+  if (user.lock?.value) {
+    return alert("对方正在通话中");
+  }
   remoteUsername = user.username;
   remoteClientId = user.clientId;
   if (!connectDisabled.value) {
@@ -500,12 +586,13 @@ onBeforeUnmount(() => {
     <div class="chatbox">
       <ul class="left-item">
         <li
-          v-for="user in users"
+          v-for="user in usersWithMark"
           :key="user.clientId"
           class="cursor"
           @click="invite(user)"
         >
-          {{ user.username }}
+          <span>{{ user.username }}</span>
+          <span>{{ user.mark }}</span>
         </li>
       </ul>
       <div id="receiveBox" class="right-item">
